@@ -1,0 +1,5 @@
+# Dependencias de Python (probado con Python 3.13)
+spade==4.1.4      # framework de agentes (XMPP)
+pygad==3.8.1      # algoritmo genético
+numpy==2.5.4      # funciones matemáticas y población inicial
+psutil==7.2.2     # monitoreo de recursos y supervisión de procesos hijo
