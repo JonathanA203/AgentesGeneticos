@@ -1,0 +1,25 @@
+# Ejecutables y binarios de Windows
+*.exe
+*.dll
+*.sys
+*.obj
+*.o
+
+# Archivos de depuración y compilación
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.log
+
+# Registros generados dentro de build
+build/*.log
+
+# Archivos temporales
+*.tmp
+*.bak
+*~
+
+# Archivos de configuración local de editores
+.vscode/
+.idea/
