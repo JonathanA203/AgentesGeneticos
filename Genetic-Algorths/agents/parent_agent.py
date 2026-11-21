@@ -19,14 +19,23 @@ class ParentAgent(Agent):
         self.funcion_en_curso = None
         self.intento_actual = 0
         self.run_id = None
-        self.hijo_pid = None  # PID del proceso hijo en vigilancia
+        self.hijo_pid = None  # PID del proceso hijo en vigilancia (compat / un solo hijo)
+        self.active_children = {}  # run_id -> info del hijo (soporte multi-hijo)
         self.intentos = []  # historial de intentos: función, pid, veredicto y duración
         self.fase = ""  # fase actual del FSM, la lee el monitoreo de recursos
         self.recorder = None
-        # Se activa cuando el monitoreo de recursos ya está muestreando
+        # Se activa cuando el monitoreo de contadores ya está muestreando
         self.metrics_ready = asyncio.Event()
         if not METRICS_ENABLED:
             self.metrics_ready.set()
+
+        # Valores por defecto (main.py puede sobrescribirlos antes de start)
+        if not hasattr(self, "max_children"):
+            self.max_children = 1
+        if not hasattr(self, "demo_mode"):
+            self.demo_mode = False
+        if not hasattr(self, "child_behaviors"):
+            self.child_behaviors = []
 
         # Máquina de Estados
         fsm = FSMBehaviour()
@@ -40,7 +49,8 @@ class ParentAgent(Agent):
         fsm.add_transition(source=STATE_IDLE, dest=STATE_SPAWNING)
         fsm.add_transition(source=STATE_SPAWNING, dest=STATE_MONITORING)
         fsm.add_transition(source=STATE_MONITORING, dest=STATE_IDLE)
-        fsm.add_transition(source=STATE_MONITORING, dest=STATE_SPAWNING)  # reintento tras un hijo muerto o colgado
+        fsm.add_transition(source=STATE_MONITORING, dest=STATE_SPAWNING)  # reintento o más trabajo
+        fsm.add_transition(source=STATE_SPAWNING, dest=STATE_IDLE)       # sin más trabajo
 
         self.add_behaviour(fsm)
 

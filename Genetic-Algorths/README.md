@@ -1,6 +1,6 @@
 # Agents — sistema multi-agente con SPADE y algoritmos genéticos
 
-Prototipo de una arquitectura multi-agente en la que un **Monitor** coordina la optimización de funciones matemáticas. Para cada función, un **Spawner** de un solo uso evoluciona el mejor individuo con un algoritmo genético (PyGAD) y lanza un **Hijo** que corre como **proceso independiente del sistema operativo**, valida el resultado y lo reporta. El Monitor vigila el proceso de cada hijo y distingue entre éxito, muerte y cuelgue, reintentando cuando falla.
+Prototipo de una arquitectura multi-agente en la que un **Monitor** coordina la optimización de funciones matemáticas. Para cada función, un **Spawner** de un solo uso evoluciona el mejor individuo con un algoritmo genético (**DEAP**) y lanza un **Hijo** que corre como **proceso independiente del sistema operativo**, valida el resultado y lo reporta. El Monitor vigila el proceso de cada hijo y distingue entre éxito, muerte y cuelgue, reintentando cuando falla.
 
 Todos los agentes se comunican por **XMPP** a través de un servidor **Prosody** que corre en un contenedor Docker local.
 
@@ -8,12 +8,14 @@ Todos los agentes se comunican por **XMPP** a través de un servidor **Prosody**
 
 **Qué hace**
 - Optimiza (minimiza o maximiza) funciones de prueba: `sphere`, `rastrigin` y `peaks` (ver `functions.py`).
-- Delega la evolución genética al Spawner y la validación a un hijo por función.
+- Delega la evolución genética al Spawner (DEAP) y la validación a un hijo por función.
 - Supervisa a cada hijo por su PID (éxito, muerto, colgado o sin arranque) y reintenta hasta `MAX_ATTEMPTS`.
+- Soporta varios hijos concurrentes con `--children N`.
+- Modo `--demo` (inyector de fallos) vs entorno real (EDR u otro supervisor externo).
+- Capa extensible de comportamientos de laboratorio en los hijos (`behaviors.py`) para que el equipo de la tesis añada simulaciones de supervivencia.
 - Mide el consumo de CPU, RAM y red del sistema, del proceso de Python, de los hijos y del contenedor, y lo guarda en un CSV.
 
 **Qué no hace (todavía)**
-- No procesa varias funciones en paralelo: los hijos se ejecutan de uno en uno.
 - El Monitor y los Spawners comparten un proceso; solo los hijos están aislados. Si ese proceso muere, se pierde el estado del Monitor.
 - No hay tests automáticos; la prueba es ejecutar el sistema y la inyección de fallos (`tools/`).
 - El servidor XMPP es solo para desarrollo: registro abierto de cuentas y autenticación sin cifrar. No exponerlo a una red.
@@ -25,7 +27,7 @@ Todos los agentes se comunican por **XMPP** a través de un servidor **Prosody**
 | Python | Ejecutar los agentes (necesita 3.10 o superior por la sintaxis de tipos) | 3.13 |
 | Docker + Docker Compose | Ejecutar el servidor XMPP (Prosody) en un contenedor | Docker 29.8 |
 | Contenedor `xmpp-prosody` | Servidor XMPP: reparte los mensajes entre agentes. Imagen `prosody/prosody` en `localhost:5222`, dominio `localhost` | — |
-| Librerías de Python | Ver `requirements.txt`: SPADE (agentes), PyGAD (algoritmo genético), NumPy, psutil | — |
+| Librerías de Python | Ver `requirements.txt`: SPADE (agentes), DEAP (algoritmo genético), NumPy, psutil | — |
 
 ## Arquitectura y flujo
 
@@ -41,7 +43,7 @@ Todos los agentes se comunican por **XMPP** a través de un servidor **Prosody**
     run_id)    │       ┌─────┴──────┐           │
         ┌──────┴────┐  │  SPAWNER   │     ┌─────┴──────────┐
         │  MONITOR  │  │  one-shot  │     │     HIJO       │
-        │  (FSM)    │  │ (PyGAD)    │     │ proceso propio │
+        │  (FSM)    │  │ (DEAP)     │     │ proceso propio │
         │           │  └─────┬──────┘     │ child_main.py  │
         └─────┬─────┘        │            └────────▲───────┘
               │              └─ lanza el proceso ──┘
@@ -54,7 +56,7 @@ Monitor y Spawners viven en el mismo proceso de Python. El Hijo es un proceso ap
 **Ciclo, repetido por cada función pendiente:**
 
 1. **Monitor → Spawner:** el Monitor levanta un Spawner y le envía una orden con la función, un genoma base aleatorio y un `run_id` que identifica el intento.
-2. **Spawner:** siembra una población alrededor del genoma base y corre PyGAD (selección, cruza y mutación). Se queda con el mejor individuo.
+2. **Spawner:** siembra una población alrededor del genoma base y corre DEAP (selección, cruza y mutación). Se queda con el mejor individuo.
 3. **Spawner → Hijo:** lanza el hijo como proceso independiente (`python child_main.py`), avisa su PID al Monitor (`launched`) y se apaga.
 4. **Hijo → Monitor:** el hijo conecta a XMPP, confirma su arranque (`started`), evalúa la función con su genoma, envía el resultado (`result`) y termina.
 5. **Monitor:** mientras tanto vigila al hijo por mensajes y por el estado de su proceso, y emite un veredicto.
@@ -101,20 +103,21 @@ Agents/
 ├── child_main.py           # Punto de entrada del proceso hijo (lo lanza el Spawner, no se ejecuta a mano)
 ├── config.py               # Estados, servidor XMPP, funciones, timeouts, monitoreo
 ├── functions.py            # Funciones matemáticas a optimizar y genoma base aleatorio
-├── genetic.py              # Algoritmo genético con PyGAD: evolve_best_genome()
+├── genetic.py              # Algoritmo genético con DEAP: evolve_best_genome()
+├── behaviors.py            # Comportamientos de laboratorio extensibles de los hijos
 ├── requirements.txt        # Dependencias de Python
 ├── agents/
 │   ├── parent_agent.py     # Monitor: arma la máquina de estados
-│   ├── states.py           # Estados IDLE, SPAWNING y MONITORING (supervisión y reintentos)
+│   ├── states.py           # Estados IDLE, SPAWNING y MONITORING (supervisión; multi-hijo)
 │   ├── supervision.py      # child_alive() / kill_child(): estado del proceso por PID
 │   ├── spawner_agent.py    # Spawner: evoluciona el mejor individuo y lanza el proceso hijo
-│   └── optimizer_agent.py  # Hijo: avisa su PID, valida el genoma y reporta
+│   └── optimizer_agent.py  # Hijo: avisa su PID, comportamientos, valida y reporta
 ├── monitoring/             # Monitoreo de recursos (corre en paralelo al Monitor)
 │   ├── behaviour.py        # Muestreo periódico
 │   ├── collectors.py       # Colectores: sistema, proceso Python, hijos, Docker, estado de agentes
 │   └── recorder.py         # Escritura del CSV y resumen
 ├── tools/
-│   └── fault_injector.py   # Solo pruebas: mata o congela procesos hijo desde fuera
+│   └── fault_injector.py   # Solo pruebas (--demo): mata o congela procesos hijo desde fuera
 └── container-server/       # Servidor XMPP local
     ├── docker-compose.yml
     └── prosody.cfg.lua
@@ -157,7 +160,33 @@ docker compose -f container-server/docker-compose.yml logs -f
 python main.py
 ```
 
+Banderas útiles:
+
+```bash
+# Hasta 3 hijos concurrentes, modo demo (inyector permitido) y comportamientos de laboratorio
+python main.py --children 3 --demo --behaviors low_profile,lab_artifact
+
+# Entorno real (sin inyector): no pasar --demo
+python main.py --children 2
+```
+
+| Bandera | Significado |
+|---|---|
+| `--children N` | Máximo de procesos hijo concurrentes (default 1). Con N>1 el monitor vigila varios a la vez. |
+| `--demo` | Modo demo: se asume/permite el uso de `tools/fault_injector.py`. Sin esta bandera se trabaja contra el entorno real (EDR u otro). |
+| `--behaviors lista` | Comportamientos de laboratorio separados por comas (ver `behaviors.py`). Ejemplo: `low_profile,lab_artifact,heartbeat`. |
+
 El sistema procesa las funciones de `FUNCTIONS_TO_OPTIMIZE` (en `config.py`) y termina solo, imprimiendo los resultados, una tabla de intentos por hijo y el consumo de recursos.
+
+### Comportamientos de los hijos (capa de laboratorio)
+
+El módulo `behaviors.py` permite registrar comportamientos que el hijo ejecuta antes de validar el genoma. Están pensados para el laboratorio de evasión/persistencia de la tesis:
+
+- Solo simulaciones inocuas (retardos, heartbeats, escritura de artefactos en `logs/lab_artifacts/`).
+- **No** se incluyen técnicas reales de APT, persistencia o evasión de EDR.
+- Para añadir uno nuevo: definir una función, decorarla con `@register("nombre")` y usarla con `--behaviors nombre`.
+
+Comportamientos incluidos: `noop`, `low_profile`, `lab_artifact`, `heartbeat`.
 
 ### 4. Ver los logs
 
@@ -215,7 +244,7 @@ Constantes en `config.py`:
 
 Variables de entorno opcionales: `AGENTES_START_TIMEOUT`, `AGENTES_CHILD_TIMEOUT`, `AGENTES_MAX_ATTEMPTS`, `AGENTES_METRICS_CSV` (ruta del CSV) y `AGENTES_CHILD_LOG_DIR` (carpeta de logs de los hijos).
 
-Los parámetros del algoritmo genético están en `genetic.py` (`GA_PARAMS`: 100 generaciones, 40 individuos, 10 padres, 20 % de mutación).
+Los parámetros del algoritmo genético están en `genetic.py` (`GA_PARAMS`: 100 generaciones, 40 individuos, 20 % de mutación aprox., cxpb/mutpb). La librería usada es DEAP (misma interfaz `evolve_best_genome`).
 
 ## Prueba de fallos
 
