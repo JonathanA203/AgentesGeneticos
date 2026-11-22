@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Salidas de ejecución: logs de hijos y CSV de métricas
+logs/

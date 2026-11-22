@@ -1,0 +1,13 @@
+services:
+  prosody:
+    image: prosody/prosody:latest
+    container_name: xmpp-prosody
+    user: root
+    # La clave TLS de la imagen es de root; se la damos a prosody antes de arrancar
+    entrypoint: ["sh", "-c", "chown -R prosody:prosody /etc/prosody/certs && exec /entrypoint.sh \"$$@\"", "--"]
+    command: ["prosody", "-F"]
+    ports:
+      - "127.0.0.1:5222:5222"   # solo accesible desde esta máquina (registro abierto y sin cifrado)
+    volumes:
+      - ./prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+    restart: unless-stopped
