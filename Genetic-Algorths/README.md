@@ -84,6 +84,8 @@ IDLE ──► SPAWNING ──► MONITORING ──► IDLE
 | `colgado` | El proceso sigue vivo tras `CHILD_TIMEOUT` (60 s) sin resultado | Lo termina y reintenta |
 | `sin_arranque` | Pasaron `START_TIMEOUT` (30 s) sin PID, o el proceso vive pero nunca se conectó | Reintenta |
 
+Los reintentos van a una cola propia (`reintentos_pendientes`), separada de las funciones nuevas y de los hijos activos: así, con `--children N`, varios fallos simultáneos no se pisan ni se relanza una función que ya está corriendo.
+
 Si se agotan los intentos de una función, el Monitor lo registra y continúa con las demás. Los mensajes de otro intento se descartan por `run_id`, y la hora de creación del proceso evita confundirlo con otro si el sistema reutiliza el PID.
 
 ### Mensajes (XMPP, cuerpo en JSON)
@@ -98,13 +100,14 @@ Si se agotan los intentos de una función, el Monitor lo registra y continúa co
 ## Estructura
 
 ```
-Agents/
+Genetic-Algorths/
 ├── main.py                 # Punto de entrada: crea el Monitor y espera a que termine
 ├── child_main.py           # Punto de entrada del proceso hijo (lo lanza el Spawner, no se ejecuta a mano)
 ├── config.py               # Estados, servidor XMPP, funciones, timeouts, monitoreo
 ├── functions.py            # Funciones matemáticas a optimizar y genoma base aleatorio
 ├── genetic.py              # Algoritmo genético con DEAP: evolve_best_genome()
 ├── behaviors.py            # Comportamientos de laboratorio extensibles de los hijos
+├── log_config.py           # Logging con hora (ms) y nivel; archivo opcional con AGENTES_LOG_FILE
 ├── requirements.txt        # Dependencias de Python
 ├── agents/
 │   ├── parent_agent.py     # Monitor: arma la máquina de estados
@@ -118,6 +121,7 @@ Agents/
 │   └── recorder.py         # Escritura del CSV y resumen
 ├── tools/
 │   └── fault_injector.py   # Solo pruebas (--demo): mata o congela procesos hijo desde fuera
+├── docs/genetic/           # Resultados de pruebas (ignorada por git, ver .gitignore)
 └── container-server/       # Servidor XMPP local
     ├── docker-compose.yml
     └── prosody.cfg.lua
@@ -125,7 +129,7 @@ Agents/
 
 ## Puesta en marcha
 
-Todos los comandos se ejecutan desde la carpeta `Agents/`. Los de PowerShell sirven en Windows; en Linux/macOS use los de bash.
+Todos los comandos se ejecutan desde la carpeta `Genetic-Algorths/`. Los de PowerShell sirven en Windows; en Linux/macOS use los de bash.
 
 ### 1. Instalar dependencias
 
@@ -190,24 +194,49 @@ Comportamientos incluidos: `noop`, `low_profile`, `lab_artifact`, `heartbeat`.
 
 ### 4. Ver los logs
 
+Todos los logs de texto llevan **hora con milisegundos y nivel** (`INFO`, `WARNING`, `ERROR`), por lo que se pueden correlacionar entre sí y con `metricas.csv`:
+
+```
+14:37:18.291 INFO    agentes.monitor | [SPAWNING] Orden enviada: optimizar 'sphere' ...
+14:37:27.100 WARNING agentes.monitor | [MONITORING] FALLO del hijo de 'sphere': MUERTO (pid 30348, intento 1/2).
+14:38:01.101 ERROR   agentes.monitor | [MONITORING] Se agotaron los intentos para 'rastrigin'. ...
+```
+
+`WARNING` marca un fallo de hijo o un reintento; `ERROR`, una función que se queda sin resultado.
+
 | Qué | Cómo |
 |---|---|
-| Salida del Monitor y los Spawners | Es la consola donde corre `python main.py`. Para guardarla además en un archivo, ver abajo |
-| Logs de cada proceso hijo | Carpeta `logs/hijos/` (un archivo por hijo) |
-| Métricas de consumo | `logs/metricas.csv` (una fila por muestra) |
+| Salida del Monitor y los Spawners | Consola donde corre `python main.py`. Para guardarla también en un archivo: variable `AGENTES_LOG_FILE` (ver abajo) |
+| Logs de cada proceso hijo | Carpeta `logs/hijos/` (un archivo por hijo, con el mismo formato) |
+| Evolución del algoritmo genético | En el log, una línea `AG:` por intento (generaciones, evaluaciones, tiempo, mejor valor inicial y final, última mejora). El detalle por generación (`gen,best,mean,std,evals`) está en `logs/ga/<run_id>.csv`; con `AGENTES_LOG_LEVEL=DEBUG` también sale por consola |
+| Métricas de consumo | `logs/metricas.csv` (una fila por muestra; ver columnas abajo) |
 | Logs del servidor XMPP | `docker compose -f container-server/docker-compose.yml logs -f` |
 
-Ejecutar guardando la salida en `logs/ejecucion.log` y viéndola a la vez:
+Ejecutar guardando la salida en un archivo y viéndola a la vez:
 
 ```powershell
-New-Item -ItemType Directory -Force logs | Out-Null
-python main.py 2>&1 | Tee-Object logs\ejecucion.log
+$env:AGENTES_LOG_FILE = "logs\ejecucion.log"
+python main.py
 ```
 
 ```bash
-mkdir -p logs
-python main.py 2>&1 | tee logs/ejecucion.log
+AGENTES_LOG_FILE=logs/ejecucion.log python main.py
 ```
+
+**Columnas de `metricas.csv` sobre los hijos.** Una fila por muestra; con hijos concurrentes, las columnas de lista llevan un valor por hijo, en el mismo orden, unidos con `+` (el PID aparece como `-` hasta que el hijo se lanza):
+
+| Columna | Ejemplo | Significado |
+|---|---|---|
+| `fase` | `MONITORING` | Estado del Monitor |
+| `hijos_activos` | `3` | Hijos que el Monitor está vigilando |
+| `funciones_activas` | `sphere+rastrigin+peaks` | Función de cada hijo |
+| `intentos_activos` | `1+1+2` | Número de intento de cada hijo |
+| `pids_activos` | `9680+16696+30788` | PID de cada hijo |
+| `hijos_proc`, `hijos_ram_mb` | `3`, `274.4` | Procesos hijo de Python realmente vivos y su RAM |
+
+En el resumen final, una muestra con varios hijos cuenta para cada una de sus funciones, de modo que las filas por función pueden sumar más que `TOTAL` (que cuenta cada muestra una vez).
+
+Variables de logging: `AGENTES_LOG_FILE` (archivo adicional a la consola; los hijos lo ignoran porque su salida ya va a `logs/hijos/`) y `AGENTES_LOG_LEVEL` (`DEBUG`, `INFO` por defecto, `WARNING`, `ERROR`).
 
 Ver los logs de los hijos:
 
@@ -242,9 +271,11 @@ Constantes en `config.py`:
 | `METRICS_ENABLED`, `METRICS_INTERVAL` | Monitoreo de recursos y su periodo | activo, 0.5 s |
 | `DOCKER_CONTAINER` | Contenedor que se incluye en el monitoreo | `xmpp-prosody` |
 
-Variables de entorno opcionales: `AGENTES_START_TIMEOUT`, `AGENTES_CHILD_TIMEOUT`, `AGENTES_MAX_ATTEMPTS`, `AGENTES_METRICS_CSV` (ruta del CSV) y `AGENTES_CHILD_LOG_DIR` (carpeta de logs de los hijos).
+Variables de entorno opcionales: `AGENTES_LOG_FILE`, `AGENTES_LOG_LEVEL`, `AGENTES_GA_LOG_DIR` (historial del AG), `AGENTES_START_TIMEOUT`, `AGENTES_CHILD_TIMEOUT`, `AGENTES_MAX_ATTEMPTS`, `AGENTES_METRICS_CSV` (ruta del CSV) y `AGENTES_CHILD_LOG_DIR` (carpeta de logs de los hijos).
 
-Los parámetros del algoritmo genético están en `genetic.py` (`GA_PARAMS`: 100 generaciones, 40 individuos, 20 % de mutación aprox., cxpb/mutpb). La librería usada es DEAP (misma interfaz `evolve_best_genome`).
+Los parámetros del algoritmo genético están en `genetic.py` (`GA_PARAMS`): 100 generaciones, 40 individuos, cruza `cxpb` 0.7, mutación `mutpb` 0.2 con 20 % de genes y **elitismo de 2 individuos**. La librería usada es DEAP (interfaz `evolve_best_genome`).
+
+**Elitismo.** Los 2 mejores individuos de cada generación pasan intactos a la siguiente, y un Hall of Fame guarda el mejor de toda la corrida, así el resultado nunca empeora respecto a una generación anterior. En 40 pruebas por función con los mismos genomas base (comparado con la versión sin elitismo), `rastrigin` pasó de 28/40 a 36/40 corridas dentro del mínimo global y su peor caso de 1.99 a 0.29. `sphere` (295/300 frente a 296/300) y `peaks` (38/40 frente a 39/40) quedan equivalentes.
 
 ## Prueba de fallos
 

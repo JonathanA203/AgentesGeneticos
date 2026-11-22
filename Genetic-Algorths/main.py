@@ -13,7 +13,10 @@ import os
 import time
 
 from config import XMPP_SERVER, PASSWORD, MAX_CHILDREN, DEMO_MODE, DEFAULT_CHILD_BEHAVIORS
+from log_config import get_logger
 from agents.parent_agent import ParentAgent
+
+log = get_logger("main")
 
 
 def parse_args():
@@ -61,16 +64,16 @@ async def main():
     os.environ["AGENTES_DEMO"] = "1" if demo else "0"
     os.environ["AGENTES_BEHAVIORS"] = ",".join(behaviors)
 
-    print("Iniciando Sistema Multi-Agente v2 (DEAP)...")
-    print(f"  max_children = {max_children}")
-    print(f"  demo_mode    = {demo}  ({'inyector de fallos permitido' if demo else 'entorno real / EDR'})")
-    print(f"  behaviors    = {behaviors or '(ninguno)'}")
+    log.info("Iniciando Sistema Multi-Agente v2 (DEAP)...")
+    log.info(f"  max_children = {max_children}")
+    log.info(f"  demo_mode    = {demo}  ({'inyector de fallos permitido' if demo else 'entorno real / EDR'})")
+    log.info(f"  behaviors    = {behaviors or '(ninguno)'}")
 
     if demo:
-        print("  [demo] Recuerda lanzar el inyector en otra terminal si quieres simular muertes/cuelgues:")
-        print("         python tools/fault_injector.py --kill sphere:1 --duration 90")
+        log.info("  [demo] Recuerda lanzar el inyector en otra terminal si quieres simular muertes/cuelgues:")
+        log.info("         python tools/fault_injector.py --kill sphere:1 --duration 90")
     else:
-        print("  [real] No se usará el inyector. La supervivencia depende del entorno real (EDR, etc.).")
+        log.info("  [real] No se usará el inyector. La supervivencia depende del entorno real (EDR, etc.).")
 
     padre_jid = f"padre_orquestador_{int(time.time())}@{XMPP_SERVER}"
     padre = ParentAgent(padre_jid, PASSWORD)
@@ -88,7 +91,7 @@ async def main():
         except KeyboardInterrupt:
             break
 
-    print("Apagando motor SPADE...")
+    log.info("Apagando motor SPADE...")
     await padre.stop()
 
 
