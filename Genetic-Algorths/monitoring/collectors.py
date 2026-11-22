@@ -118,17 +118,21 @@ class DockerCollector(Collector):
 
 
 class AgentStateCollector(Collector):
-    """Contexto del sistema multi-agente: fase del FSM y función en curso,
-    para poder correlacionar el consumo con lo que hacen los agentes."""
+    """Contexto del sistema multi-agente: fase del FSM y hijos activos, para poder correlacionar
+    el consumo con lo que hacen los agentes. Con varios hijos concurrentes, las columnas de
+    lista (funciones, intentos y PIDs) llevan un valor por hijo, en el mismo orden, unidos con '+'.
+    Un PID desconocido (el hijo aún no se lanzó) aparece como '-'."""
 
     def __init__(self, agent):
         self._agent = agent
 
     def collect(self) -> dict:
+        hijos = list((getattr(self._agent, "active_children", None) or {}).values())  # copia: el FSM la muta
         return {
             "fase": getattr(self._agent, "fase", ""),
-            "funcion": getattr(self._agent, "funcion_en_curso", None) or "",
             "spawners_creados": getattr(self._agent, "spawners_creados", 0),
-            "intento": getattr(self._agent, "intento_actual", 0),
-            "hijo_pid": getattr(self._agent, "hijo_pid", None) or "",
+            "hijos_activos": len(hijos),
+            "funciones_activas": "+".join(h["function"] for h in hijos),
+            "intentos_activos": "+".join(str(h["attempt"]) for h in hijos),
+            "pids_activos": "+".join(str(h["pid"] or "-") for h in hijos),
         }

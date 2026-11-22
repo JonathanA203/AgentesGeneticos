@@ -30,13 +30,19 @@ class CsvRecorder:
             self._file.close()
 
     def summary(self) -> str:
-        """Promedio y pico de los principales recursos, agrupados por función."""
+        """Promedio y pico de los principales recursos, agrupados por función.
+
+        Una muestra con varios hijos activos cuenta para cada una de sus funciones (por eso la suma
+        de las filas por función puede superar al TOTAL, que cuenta cada muestra una sola vez)."""
         cols = [("sys_cpu_pct", "CPU sis %"), ("sys_ram_used_mb", "RAM sis MB"),
                 ("proc_cpu_pct", "CPU py %"), ("proc_ram_mb", "RAM py MB"),
+                ("hijos_proc", "procs hijo"), ("hijos_ram_mb", "RAM hijos MB"),
                 ("docker_cpu_pct", "CPU docker %"), ("docker_ram_mb", "RAM docker MB")]
         groups = defaultdict(list)
         for r in self.rows:
-            groups[r.get("funcion") or "(sin función)"].append(r)
+            activas = [f for f in str(r.get("funciones_activas") or "").split("+") if f]
+            for f in activas or ["(sin hijos)"]:
+                groups[f].append(r)
 
         def stats(rows, key):
             vals = [r[key] for r in rows if r.get(key) is not None]

@@ -1,15 +1,23 @@
 """Algoritmo genético con DEAP (reemplazo de PyGAD).
 
-Mantiene la misma interfaz pública:
+Interfaz pública:
 
     evolve_best_genome(fn: MathFunction, base_genome: list, seed: int | None = None) -> dict
 
-Devuelve {"genome": [...], "value": float} para no romper SpawnerAgent ni el resto
-de la arquitectura.
+Devuelve:
+    genome       mejor genoma encontrado en toda la corrida
+    value        valor de la función en ese genoma
+    history      lista por generación: {"gen", "best", "mean", "std", "evals"} (gen 0 = población inicial)
+    elapsed_s    segundos que tardó la evolución
+
+Elitismo: los `elite_size` mejores individuos de cada generación pasan intactos a la siguiente, y un
+Hall of Fame guarda el mejor de toda la corrida. Así el resultado nunca es peor que la mejor
+población anterior (sin elitismo la cruza y la mutación podían perder al mejor individuo).
 """
 from __future__ import annotations
 
 import random
+import time
 from typing import Sequence
 
 import numpy as np
@@ -17,15 +25,18 @@ from deap import base as deap_base
 from deap import creator, tools
 
 from functions import MathFunction
+from log_config import get_logger
 
-# Parámetros por defecto (equivalentes a los que había con PyGAD)
+log = get_logger("ga")
+
+# Parámetros por defecto
 GA_PARAMS = dict(
     num_generations=100,
-    num_parents_mating=10,
     sol_per_pop=40,
     mutation_percent_genes=20,
     cxpb=0.7,
     mutpb=0.2,
+    elite_size=2,  # individuos que pasan intactos a la siguiente generación
 )
 
 # Dispersión (fracción del rango) de la población inicial alrededor del genoma base
@@ -42,56 +53,41 @@ def _ensure_creators() -> None:
         creator.create("Individual", list, fitness=creator.FitnessMax)
 
 
+def _evaluate(individual: Sequence[float], fn: MathFunction):
+    """Devuelve una tupla de fitness (DEAP exige iterable)."""
+    return (fn.func(individual),)
+
+
 def evolve_best_genome(
     fn: MathFunction,
     base_genome: list,
     seed: int | None = None,
 ) -> dict:
-    """Evoluciona (selección, cruza y mutación) una población sembrada desde
-    `base_genome` y devuelve el mejor individuo. Es bloqueante (CPU).
-
-    Interfaz idéntica a la versión anterior con PyGAD.
-    """
+    """Evoluciona (selección, cruza, mutación y elitismo) una población sembrada desde
+    `base_genome` y devuelve el mejor individuo. Es bloqueante (CPU)."""
     _ensure_creators()
+    t_start = time.perf_counter()
     low, high = fn.bounds
     dim = fn.dimensions
     pop_size = GA_PARAMS["sol_per_pop"]
     ngen = GA_PARAMS["num_generations"]
     cxpb = GA_PARAMS["cxpb"]
     mutpb = GA_PARAMS["mutpb"]
+    elite_size = min(GA_PARAMS["elite_size"], pop_size - 1)
     indpb = max(0.01, GA_PARAMS["mutation_percent_genes"] / 100.0)
 
     rng = random.Random(seed)
     np_rng = np.random.default_rng(seed)
 
     toolbox = deap_base.Toolbox()
+    fit_cls = creator.FitnessMax if fn.goal == "max" else creator.FitnessMin
 
-    # Elegir clase de fitness según el objetivo
-    if fn.goal == "max":
-        fit_cls = creator.FitnessMax
-    else:
-        fit_cls = creator.FitnessMin
-
-    def init_individual():
-        genes = np_rng.uniform(low, high, dim).tolist()
-        ind = creator.Individual(genes)
-        ind.fitness = fit_cls()
-        return ind
-
-    toolbox.register("individual", init_individual)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("evaluate", _evaluate, fn=fn)
     toolbox.register("mate", tools.cxBlend, alpha=0.4)
-    toolbox.register(
-        "mutate",
-        tools.mutGaussian,
-        mu=0,
-        sigma=SEED_SPREAD * (high - low),
-        indpb=indpb,
-    )
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=SEED_SPREAD * (high - low), indpb=indpb)
     toolbox.register("select", tools.selTournament, tournsize=3)
 
-    # Población inicial sembrada alrededor del genoma base
+    # Población inicial sembrada alrededor del genoma base (el genoma base original también compite)
     population = []
     base_list = list(base_genome)
     for i in range(pop_size):
@@ -99,19 +95,34 @@ def evolve_best_genome(
             ind = creator.Individual(base_list)
         else:
             noise = np_rng.normal(0, SEED_SPREAD * (high - low), dim)
-            genes = np.clip(np.asarray(base_list) + noise, low, high).tolist()
-            ind = creator.Individual(genes)
+            ind = creator.Individual(np.clip(np.asarray(base_list) + noise, low, high).tolist())
         ind.fitness = fit_cls()
         population.append(ind)
 
-    # Evaluar población inicial
-    fitnesses = list(map(toolbox.evaluate, population))
-    for ind, fit in zip(population, fitnesses):
-        ind.fitness.values = fit
+    evals = 0
+    for ind in population:
+        ind.fitness.values = toolbox.evaluate(ind)
+        evals += 1
 
-    # Bucle generacional
-    for gen in range(ngen):
-        offspring = toolbox.select(population, len(population))
+    hof = tools.HallOfFame(1)  # mejor individuo de toda la corrida
+    hof.update(population)
+    history = []
+
+    def record(gen: int) -> None:
+        vals = np.array([ind.fitness.values[0] for ind in population])
+        best = float(vals.max() if fn.goal == "max" else vals.min())
+        history.append({"gen": gen, "best": best, "mean": float(vals.mean()),
+                        "std": float(vals.std()), "evals": evals})
+        log.debug(f"{fn.name} gen {gen:3d}: mejor={best:.6g} media={vals.mean():.6g} "
+                  f"std={vals.std():.3g} evaluaciones={evals}")
+
+    record(0)
+
+    for gen in range(1, ngen + 1):
+        # Élite: los mejores pasan sin cambios a la siguiente generación
+        elites = list(map(toolbox.clone, tools.selBest(population, elite_size)))
+
+        offspring = toolbox.select(population, pop_size - elite_size)
         offspring = list(map(toolbox.clone, offspring))
 
         for i in range(1, len(offspring), 2):
@@ -128,26 +139,18 @@ def evolve_best_genome(
                 offspring[i][j] = float(np.clip(offspring[i][j], low, high))
 
         invalid = [ind for ind in offspring if not ind.fitness.valid]
-        fitnesses = list(map(toolbox.evaluate, invalid))
-        for ind, fit in zip(invalid, fitnesses):
-            ind.fitness.values = fit
+        for ind in invalid:
+            ind.fitness.values = toolbox.evaluate(ind)
+        evals += len(invalid)
 
-        population[:] = offspring
+        population[:] = offspring + elites
+        hof.update(population)
+        record(gen)
 
-    # Mejor individuo según el objetivo
-    if fn.goal == "max":
-        best = tools.selBest(population, 1)[0]
-    else:
-        # weights=(-1,): el "mejor" fitness es el menos negativo = valor de función más bajo
-        best = tools.selBest(population, 1)[0]
-
-    value = float(fn.func(best))
+    best = hof[0]
     return {
         "genome": [float(g) for g in best],
-        "value": value,
+        "value": float(fn.func(best)),
+        "history": history,
+        "elapsed_s": time.perf_counter() - t_start,
     }
-
-
-def _evaluate(individual: Sequence[float], fn: MathFunction):
-    """Devuelve una tupla de fitness (DEAP exige iterable)."""
-    return (fn.func(individual),)

@@ -5,3 +5,6 @@ venv/
 
 # Salidas de ejecución: logs de hijos y CSV de métricas
 logs/
+
+# Resultados de las pruebas del algoritmo genético
+docs/genetic/

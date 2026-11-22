@@ -16,11 +16,10 @@ class ParentAgent(Agent):
         self.funciones_pendientes = list(FUNCTIONS_TO_OPTIMIZE)
         self.resultados = []
         self.spawners_creados = 0
-        self.funcion_en_curso = None
-        self.intento_actual = 0
-        self.run_id = None
-        self.hijo_pid = None  # PID del proceso hijo en vigilancia (compat / un solo hijo)
         self.active_children = {}  # run_id -> info del hijo (soporte multi-hijo)
+        # Cola de reintentos: (función, número de intento). Es independiente de las funciones
+        # activas, así que varios fallos simultáneos no se pisan ni se relanza un hijo que sigue vivo.
+        self.reintentos_pendientes = []
         self.intentos = []  # historial de intentos: función, pid, veredicto y duración
         self.fase = ""  # fase actual del FSM, la lee el monitoreo de recursos
         self.recorder = None

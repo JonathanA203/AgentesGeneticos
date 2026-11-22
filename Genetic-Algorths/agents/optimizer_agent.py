@@ -8,6 +8,9 @@ from spade.message import Message
 
 from functions import FUNCTIONS
 from behaviors import run_behaviors
+from log_config import get_logger
+
+log = get_logger("hijo")
 
 
 # ==========================================
@@ -31,8 +34,8 @@ class OptimizerAgent(Agent):
             proc = psutil.Process(os.getpid())
             await self._inform({"type": "started", "pid": proc.pid, "create_time": proc.create_time(),
                                 "function": fn.name})
-            print(f"  [{self.agent.name}] Proceso {proc.pid} iniciado. Validando genoma "
-                  f"{[round(g, 4) for g in genome]} en '{fn.name}'...")
+            log.info(f"[{self.agent.name}] Proceso {proc.pid} iniciado. Validando genoma "
+                     f"{[round(g, 4) for g in genome]} en '{fn.name}'...")
 
             # 2. Capa de comportamientos de laboratorio (extensible; ver behaviors.py).
             #    Pensada para que el equipo de la tesis añada simulaciones de supervivencia
@@ -44,14 +47,14 @@ class OptimizerAgent(Agent):
                 "pid": proc.pid,
             }
             if not run_behaviors(behaviors, ctx):
-                print(f"  [{self.agent.name}] Un comportamiento abortó; no se envía resultado.")
+                log.warning(f"[{self.agent.name}] Un comportamiento abortó; no se envía resultado.")
                 await self.agent.stop()
                 return
 
             # 3. Validar y reportar el resultado
             valor = fn.func(genome)
-            print(f"  [{self.agent.name}] f(genoma) = {valor:.6f} (óptimo conocido {fn.known_optimum}). "
-                  f"Enviando resultado al monitor.")
+            log.info(f"[{self.agent.name}] f(genoma) = {valor:.6f} (óptimo conocido {fn.known_optimum}). "
+                     f"Enviando resultado al monitor.")
             await self._inform({
                 "type": "result",
                 "function": fn.name,

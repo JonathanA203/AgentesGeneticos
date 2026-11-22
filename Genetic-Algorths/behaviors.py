@@ -29,6 +29,10 @@ import time
 from pathlib import Path
 from typing import Callable, Any
 
+from log_config import get_logger
+
+log = get_logger("behaviors")
+
 # Carpeta de artefactos de laboratorio (solo para pruebas; no es persistencia real)
 LAB_ARTIFACT_DIR = Path(os.environ.get("AGENTES_LAB_ARTIFACT_DIR", Path(__file__).parent / "logs" / "lab_artifacts"))
 
@@ -64,12 +68,12 @@ def run_behaviors(names: list[str] | None, context: dict[str, Any] | None = None
     for name in names:
         fn = _REGISTRY.get(name)
         if fn is None:
-            print(f"  [behaviors] comportamiento desconocido '{name}', se omite")
+            log.warning(f"comportamiento desconocido '{name}', se omite")
             continue
-        print(f"  [behaviors] ejecutando '{name}'...")
+        log.info(f"ejecutando '{name}'...")
         ok = fn(context)
         if not ok:
-            print(f"  [behaviors] '{name}' abortó la continuación")
+            log.warning(f"'{name}' abortó la continuación")
             return False
     return True
 
@@ -114,7 +118,7 @@ def _lab_artifact(ctx: dict) -> bool:
         f"lab artifact\nrun_id={run_id}\npid={pid}\nfunction={ctx.get('function', '?')}\n",
         encoding="utf-8",
     )
-    print(f"  [behaviors] artefacto de laboratorio escrito en {path}")
+    log.info(f"artefacto de laboratorio escrito en {path}")
     return True
 
 
@@ -124,6 +128,6 @@ def _heartbeat(ctx: dict) -> bool:
     de procesos de larga duración o de actividad periódica)."""
     n = int(ctx.get("heartbeat_count", 3))
     for i in range(n):
-        print(f"  [behaviors] heartbeat {i + 1}/{n}")
+        log.info(f"heartbeat {i + 1}/{n}")
         time.sleep(0.4 + random.random() * 0.3)
     return True
