@@ -1,0 +1,6 @@
+# Dependencias para los comportamientos Python de Behaviour-EDR.
+# Las dependencias del sistema multi-agente están en Genetic-Algorths/requirements.txt
+-r ../Genetic-Algorths/requirements.txt
+
+# Dependencia necesaria para SPADE/SQLAlchemy asyncio (no se instala por defecto)
+greenlet

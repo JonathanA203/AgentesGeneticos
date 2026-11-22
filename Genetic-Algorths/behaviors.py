@@ -127,3 +127,13 @@ def _heartbeat(ctx: dict) -> bool:
         print(f"  [behaviors] heartbeat {i + 1}/{n}")
         time.sleep(0.4 + random.random() * 0.3)
     return True
+
+@register("edr_noop")
+def _edr_noop(ctx: dict) -> bool:
+    print("  [behaviour_edr] edr_noop: OK (integración funcionando)")
+    return True
+
+try:
+    import behaviour_edr_behaviors  # noqa: F401
+except Exception as exc:
+    print(f"[behaviors] aviso: no se pudieron cargar los comportamientos de Behaviour-EDR: {exc}")
